@@ -285,12 +285,21 @@ BOOL PEAnalyseSpace::PEAnalyse::ShowExport()
 
 BOOL PEAnalyseSpace::PEAnalyse::ShowImport()
 {
-	//https://blog.51cto.com/haidragon/2104466
+	//执行是否成功
 	BOOL bRet = FALSE;
+
+	//导入表指针
 	PIMAGE_IMPORT_DESCRIPTOR pImport = NULL;
+
+	//指针
 	PIMAGE_THUNK_DATA pThunk = NULL;
+
+	//导入名称表指针
 	PIMAGE_IMPORT_BY_NAME pName = NULL;
+
+	//字符串指针
 	PCHAR pszName = NULL;
+
 	do 
 	{
 		//没有解析
@@ -319,6 +328,7 @@ BOOL PEAnalyseSpace::PEAnalyse::ShowImport()
 
 			//获取模块名字
 			pszName = (PCHAR)(RVAtoOffset(pImport->Name) + (DWORD)m_lpBase);
+
 
 			cout << "Module Name Is: "
 				<< pszName
