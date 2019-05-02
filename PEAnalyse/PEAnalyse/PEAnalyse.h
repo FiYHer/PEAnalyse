@@ -44,6 +44,8 @@ namespace PEAnalyseSpace
 		BOOL SaveFile();
 		//输出导出表
 		BOOL ShowExport();
+		//输出导入表
+		BOOL ShowImport();
 	};
 }
 

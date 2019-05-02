@@ -282,3 +282,79 @@ BOOL PEAnalyseSpace::PEAnalyse::ShowExport()
 	} while (FALSE);
 	return bRet;
 }
+
+BOOL PEAnalyseSpace::PEAnalyse::ShowImport()
+{
+	//https://blog.51cto.com/haidragon/2104466
+	BOOL bRet = FALSE;
+	PIMAGE_IMPORT_DESCRIPTOR pImport = NULL;
+	PIMAGE_THUNK_DATA pThunk = NULL;
+	PIMAGE_IMPORT_BY_NAME pName = NULL;
+	PCHAR pszName = NULL;
+	do 
+	{
+		//没有解析
+		if (m_lpBase == NULL)
+		{
+			break;
+		}
+
+		//没有导入导入表,这个是不可能的
+		if (m_pNt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].Size == NULL)
+		{
+			break;
+		}
+
+		//获取导入表
+		pImport = (PIMAGE_IMPORT_DESCRIPTOR)
+			(RVAtoOffset(m_pNt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress)
+				+ (DWORD)m_lpBase);
+
+		//循环遍历
+		while (pImport->Name)
+		{
+			//获取导入地址表
+			pThunk = (PIMAGE_THUNK_DATA)
+				(RVAtoOffset(pImport->OriginalFirstThunk) + (DWORD)m_lpBase);
+
+			//获取模块名字
+			pszName = (PCHAR)(RVAtoOffset(pImport->Name) + (DWORD)m_lpBase);
+
+			cout << "Module Name Is: "
+				<< pszName
+				<< endl;
+
+			//循环遍历地址
+			while (pThunk->u1.AddressOfData)
+			{
+				//判断是序号导入还是名称导入
+				//序号
+				if (IMAGE_SNAP_BY_ORDINAL32(pThunk->u1.AddressOfData))
+				{
+					cout << "Index Import -> ID: "
+						<< hex
+						<< (pThunk->u1.Ordinal & 0xffff)
+						<< endl;
+				}
+				else//名称导入
+				{
+					//获取导入名称
+					pName = (PIMAGE_IMPORT_BY_NAME)
+						(RVAtoOffset(pThunk->u1.AddressOfData)
+							+ (DWORD)m_lpBase);
+					cout << "Name Import -> ID: "
+						<< hex
+						<< pName->Hint
+						<< "\tName: "
+						<< pName->Name
+						<< endl;
+				}
+				pThunk++;
+			}
+			cout << endl;
+			pImport++;
+		}
+		bRet = TRUE;
+	} while (FALSE);
+	return bRet;
+}
