@@ -7,6 +7,8 @@
 #pragma comment(lib,"shlwapi.lib")
 using namespace std;
 
+#define CodeSectionName ".text"
+
 namespace PEAnalyseSpace
 {
 	class PEAnalyse
@@ -16,6 +18,8 @@ namespace PEAnalyseSpace
 		PWCHAR m_lpFilePath;
 		//文件句柄
 		HANDLE m_hFile;
+		//
+		HANDLE m_hMap;
 		//内存映射
 		LPVOID m_lpBase;
 		//文件大小
@@ -46,6 +50,8 @@ namespace PEAnalyseSpace
 		BOOL ShowExport();
 		//输出导入表
 		BOOL ShowImport();
+		//输出空地址 主要是搜索 cc 90 00
+		BOOL ShowNullAddress();
 	};
 }
 

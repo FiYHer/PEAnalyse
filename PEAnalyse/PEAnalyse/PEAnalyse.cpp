@@ -6,6 +6,7 @@ PEAnalyse::PEAnalyse()
 {
 	m_lpFilePath = nullptr;
 	m_hFile = INVALID_HANDLE_VALUE;
+	m_hMap = NULL;
 	m_lpBase = nullptr;
 	m_dwFileSize = NULL;
 	m_pDos = nullptr;
@@ -25,9 +26,14 @@ PEAnalyse::~PEAnalyse()
 		CloseHandle(m_hFile);
 		m_hFile = INVALID_HANDLE_VALUE;
 	}
+	if (m_hMap != NULL)
+	{
+		CloseHandle(m_hMap);
+		m_hMap = NULL;
+	}
 	if (m_lpBase != nullptr)
 	{
-		VirtualFree(m_lpBase, 0, MEM_RELEASE);
+		UnmapViewOfFile(m_lpBase);
 		m_lpBase = nullptr;
 	}
 }
@@ -57,11 +63,17 @@ DWORD PEAnalyseSpace::PEAnalyse::RVAtoOffset(DWORD dwRva)
 	//
 	if (m_lpBase == NULL)
 	{
-		return -1;
+		return 0;
 	}
 
 	//获取第一个节区
 	pSections = IMAGE_FIRST_SECTION(m_pNt);
+
+	//如果RVA小于第一个节区的话
+	if (dwRva < pSections->VirtualAddress)
+	{
+		return 0;
+	}
 
 	//遍历当前rva属于哪一个节区
 	while (pSections[dwIndex].VirtualAddress != NULL)
@@ -74,7 +86,7 @@ DWORD PEAnalyseSpace::PEAnalyse::RVAtoOffset(DWORD dwRva)
 		}
 		dwIndex++;
 	}
-	return -1;
+	return 0;
 }
 
 BOOL PEAnalyseSpace::PEAnalyse::LoadFile(PWCHAR szFilePath)
@@ -134,31 +146,37 @@ BOOL PEAnalyseSpace::PEAnalyse::LoadFile(PWCHAR szFilePath)
 		//获取文件的大小
 		m_dwFileSize = GetFileSize(m_hFile, NULL);
 
-		//如果上次申请了内存的话，那就要先释放
-		if (m_lpBase != NULL)
+		//先释放
+		if (m_hMap != NULL)
 		{
-			VirtualFree(m_lpBase, NULL, MEM_RELEASE);
-			m_lpBase = NULL;
+			CloseHandle(m_hMap);
+			m_hMap = NULL;
 		}
 
-		//申请内存，放exe数据
-		m_lpBase = VirtualAlloc(NULL, m_dwFileSize, MEM_COMMIT, PAGE_READWRITE);
-		if (m_lpBase == NULL)
+		//创建文件map
+		m_hMap = CreateFileMappingW(m_hFile, NULL, PAGE_READWRITE, NULL, NULL, NULL);
+		if (m_hMap == NULL)
 		{
 			break;
 		}
-		ZeroMemory(m_lpBase, m_dwFileSize);
 
-		//读取数据
-		ReadFile(m_hFile, m_lpBase, m_dwFileSize, &dwByte, NULL);
-		if (dwByte == NULL)
+		//原内存映像还存在，就先释放
+		if (m_lpBase != NULL)
+		{
+			UnmapViewOfFile(m_lpBase);
+			m_lpBase = NULL;
+		}
+
+		//创建文件内存映像
+		m_lpBase = MapViewOfFile(m_hMap, FILE_MAP_ALL_ACCESS, NULL, NULL, NULL);
+		if (m_lpBase == NULL)
 		{
 			break;
 		}
 
 		//获取dos头和nt头指针
 		m_pDos = (PIMAGE_DOS_HEADER)m_lpBase;
-		m_pNt = (PIMAGE_NT_HEADERS)(m_pDos->e_lfanew + (LONG)m_lpBase);
+		m_pNt = (PIMAGE_NT_HEADERS)((DWORD)m_pDos->e_lfanew + (DWORD)m_lpBase);
 
 		bRet = TRUE;
 	} while (FALSE);
@@ -174,10 +192,13 @@ BOOL PEAnalyseSpace::PEAnalyse::SaveFile()
 
 	do 
 	{
+		//没有文件名
 		if (m_lpFilePath == NULL)
 		{
 			break;
 		}
+
+		//没有解析文件
 		if (m_lpBase == NULL)
 		{
 			break;
@@ -204,6 +225,7 @@ BOOL PEAnalyseSpace::PEAnalyse::SaveFile()
 			break;
 		}
 
+		//写入文件名
 		WriteFile(hFile, m_lpBase, m_dwFileSize, &dwByte, NULL);
 		if (dwByte == NULL)
 		{
@@ -214,7 +236,7 @@ BOOL PEAnalyseSpace::PEAnalyse::SaveFile()
 	} while (FALSE);
 	if (pszFilePath != nullptr)
 	{
-		VirtualFree(m_lpBase, 0, MEM_RELEASE);
+		VirtualFree(pszFilePath, 0, MEM_RELEASE);
 	}
 	if (hFile != INVALID_HANDLE_VALUE)
 	{
@@ -364,6 +386,137 @@ BOOL PEAnalyseSpace::PEAnalyse::ShowImport()
 			cout << endl;
 			pImport++;
 		}
+		bRet = TRUE;
+	} while (FALSE);
+	return bRet;
+}
+
+BOOL PEAnalyseSpace::PEAnalyse::ShowNullAddress()
+{
+	BOOL bRet = FALSE;
+	BOOL bFind = FALSE;
+	PIMAGE_SECTION_HEADER pSection = NULL;
+	LPBYTE pBegin = NULL;
+	DWORD dwIndex = 0;
+	DWORD dwSize = 0;
+	DWORD dwOffset = 0;
+	INT dwMax = 5;
+	INT pNullCode[] = { 0x00,0x90,0xcc };
+	INT nNull = 0;
+	INT nNop = 0;
+	INT nInt = 0;
+
+	do 
+	{
+		//没有解析
+		if (m_lpBase == NULL)
+		{
+			break;
+		}
+
+		//获取.text代码段
+		pSection = IMAGE_FIRST_SECTION(m_pNt);
+		while (pSection != NULL)
+		{
+			if (strncmp((char*)pSection->Name,
+				CodeSectionName,
+				strlen(CodeSectionName)) == 0)
+			{
+				bFind = TRUE;
+				break;
+			}
+		}
+
+		//没有找到区段
+		if (!bFind)
+		{
+			break;
+		}
+
+		//获取开区段始地址
+		pBegin = (LPBYTE)((DWORD)m_lpBase + pSection->PointerToRawData);
+
+		//获取文件基偏移地址
+		dwOffset = pSection->PointerToRawData;
+
+		//获取当前区段的大小，下一个区段的开始地址减去这个区段的开始地址
+		dwSize = pSection->VirtualAddress;
+		dwSize = (++pSection)->VirtualAddress - dwSize;
+
+		//搜索地址
+		for (; dwIndex < dwSize; dwIndex++)
+		{
+			//输出00的地址
+			if (pBegin[dwIndex] == pNullCode[0])
+			{
+				nNull++;
+			}
+			else
+			{
+				if (nNull > dwMax)
+				{
+					cout << "Null Address Begin : 0x"
+						<< hex
+						<< dwOffset + dwIndex - nNull
+						<< " To End : 0x"
+						<< hex
+						<< dwOffset + dwIndex
+						<< " Len Is : "
+						<< dec
+						<< nNull
+						<< endl;
+
+				}
+				nNull = 0;
+			}
+
+			if (pBegin[dwIndex] == pNullCode[1])
+			{
+				nNop++;
+			}
+			else
+			{
+				if (nNop > dwMax)
+				{
+					cout << "Nop Address Begin : 0x"
+						<< hex
+						<< dwOffset + dwIndex - nNop
+						<< " To End : 0x"
+						<< hex
+						<< dwOffset + dwIndex
+						<< " Len Is : "
+						<< dec
+						<< nNop
+						<< endl;
+				}
+				nNop = 0;
+			}
+
+			if (pBegin[dwIndex] == pNullCode[2])
+			{
+				nInt++;
+			}
+			else
+			{
+				if (nInt > dwMax)
+				{
+					cout << "Int3 Address Begin : 0x"
+						<< hex
+						<< dwOffset + dwIndex - nInt
+						<< " To End : 0x"
+						<< hex
+						<< dwOffset + dwIndex
+						<< " Len Is : "
+						<< dec
+						<< nInt
+						<< endl;
+				}
+				nInt = 0;
+			}
+		}
+
+		RVAtoOffset(0);
+
 		bRet = TRUE;
 	} while (FALSE);
 	return bRet;
